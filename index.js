@@ -1,15 +1,20 @@
 const fs = require("fs");
+var os = require('os')
 const sharp = require("sharp");
+const TextToSVG = require('text-to-svg');
+const textToSVG = TextToSVG.loadSync();
+var crypto = require('crypto')
 
 const getDestination = (req, file, cb) => {
-  cb(null, "/dev/null");
+  cb(null, os.tmpdir())
 };
 
-const getFilenameDefault = (name, input) =>
-  name.split(".").slice(0, -1).join(".") +
-  `${input.useTimestamp ? "-" + Date.now() : ""}` +
-  "." +
-  input.fileFormat;
+function getFilenameDefault(req, file, cb) {//toDo
+  crypto.randomBytes(16, function (err, raw) {
+    cb(err, err ? undefined : raw.toString('hex'))
+  })
+}
+
 
 const prepareSharpStream = (SharpStram, input) => {
   if (input.resize) {
@@ -33,6 +38,14 @@ const prepareSharpStream = (SharpStram, input) => {
   }
 };
 
+const handleInput = (input) => {
+
+  if (input.type === 'text') {
+    const svgText = textToSVG.getSVG(input.input, input.options)
+    return Buffer.from(svgText);
+  }
+  return input.input
+}
 const handleWatermark = async (SharpStram, input) => {
   let gravity = "";
   switch (input.location) {
@@ -51,7 +64,7 @@ const handleWatermark = async (SharpStram, input) => {
   }
   // preparing watermark with transparency
   const opacity = input.opacity ? Number(input.opacity) * 2.55 : 255;
-  const watermarkStream = await sharp(input.input)
+  const watermarkStream = await sharp(handleInput(input))
     .composite([
       {
         input: Buffer.from([0, 0, 0, opacity]),
@@ -102,23 +115,30 @@ const handleSave = async (
 
   // finally
   file.stream.pipe(stream);
+
 };
 
 function MyCustomStorage(options) {
   this.getDestination = options.destination || getDestination;
-  this.imageOptions = options.imageOptions ||
-    options.sharpOptions || { fileFormat: "jpg", quality: 80 };
+  this.imageOptions = options.imageOptions || options.sharpOptions || { fileFormat: "jpg", quality: 80 };
   this.watermarkOptions = options.watermarkOptions;
-  this.getFilename = options.filename || getFilenameDefault;
+  this.getFilename = (options.filename || getFilenameDefault);
 }
 
 MyCustomStorage.prototype._handleFile = function _handleFile(req, file, cb) {
   const imageOptions = this.imageOptions;
   const watermarkOptions = this.watermarkOptions;
-  const filename = this.getFilename(file.originalname, imageOptions);
-  this.getDestination(req, file, function (err, path) {
-    if (err) return cb(err);
-    handleSave(req, file, cb, imageOptions, path, watermarkOptions, filename);
+  var that = this
+
+  that.getDestination(req, file, function (err, destination) {
+    if (err) return cb(err)
+
+    that.getFilename(req, file, function (err, filename) {
+      if (err) return cb(err)
+
+      handleSave(req, file, cb, imageOptions, destination, watermarkOptions, filename);
+
+    })
   });
 };
 
